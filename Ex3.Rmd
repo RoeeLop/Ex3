@@ -1,0 +1,175 @@
+---
+title: "Ex3"
+author: "Roee Lopata"
+date: "15 11 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Question 1
+
+```{r done in class}
+# Import the read counts and colData tables
+
+library("compGenomRData")
+counts_file <- system.file("extdata/rna-seq/SRP029880.raw_counts.tsv",
+                           package = "compGenomRData")
+coldata_file <- system.file("extdata/rna-seq/SRP029880.colData.tsv",
+                            package = "compGenomRData")
+
+counts <- read.table(counts_file, header = T, sep = '\t')
+#remove the 'width' column
+countData <- as.matrix(subset(counts, select = c(-width)))
+
+colData <- read.table(coldata_file, header = T, sep = '\t',
+                      stringsAsFactors = TRUE) 
+
+# Set up a DESeqDataSet object.
+library(DESeq2)
+
+#create a DESeq dataset object from the count matrix and the colData
+dds <- DESeqDataSetFromMatrix(countData = countData,
+                              colData = colData,
+                              design = ~ group)
+
+#print dds object to see the contents
+print(dds)
+
+#Filter out genes with low counts.
+filteration <- rowSums(DESeq2::counts(dds)) >= 10
+
+dds <- dds[filteration, ]
+
+dds <- DESeq(dds)
+
+#Run DESeq2 contrasting the CASE sample with CONTROL samples
+DEresults = results(dds, contrast = c("group", 'CASE', 'CTRL'))
+DEresultsDf <-as.data.frame(DEresults)
+
+library(ggplot2)
+
+ggplot()+
+  geom_point(data = DEresultsDf, 
+             mapping = aes(x = log2FoldChange, y = -log10(pvalue)), 
+             col = "grey80", size =1) +
+  geom_point(data = subset(DEresultsDf, log2FoldChange > 1 & pvalue < 0.05), 
+             aes(log2FoldChange, -log10(pvalue)), color = "red", size =1)+
+  geom_point(data = subset(DEresultsDf, log2FoldChange < 1 & pvalue < 0.05), 
+             aes(log2FoldChange, -log10(pvalue)), color = "steelblue2", size =1)+
+  theme_bw()+
+  theme(legend.title =element_blank())+
+  labs(x = "log2 (Fold change of case vs. control)", y= "-log10(P-value)")
+
+# The up-regulated genes in case samples are in red
+#The down-regulated genes in control samples are in blue
+```
+
+# Question 2
+
+```{r Q2}
+DESeq2::plotDispEsts(dds)
+```
+
+# Question 3
+
+The default value of "lfcThreshold" argument is 0. 
+This argument is used to declare a threshold for the log2 fold change that considers as differently expressed. 
+
+```{r Q3}
+DESeq2::results(dds)
+
+DESeq2::results(dds,lfcThreshold = 1)
+```
+
+# Question 4
+
+The goal of independent filtering is to filter out those tests from the procedure that have a little chance of showing significant evidence, without even looking at their test statistic.
+
+```{r Q4}
+DESeq2::results(dds, independentFiltering = FALSE)
+```
+
+# Question 5
+
+```{r Q5}
+library(edgeR)
+
+group = c("CASE","CASE","CASE","CASE","CASE","CTRL","CTRL","CTRL","CTRL","CTRL")
+
+erList = edgeR::DGEList(counts = countData,
+                    group = group)
+
+keep = rowSums(cpm(erList)>100) >= 2
+erList = erList[keep,]
+
+erList$samples$lib.size = colSums(erList$counts)
+
+erList = calcNormFactors(erList)
+
+plotMDS(erList, method="bcv", col=as.numeric(erList$samples$group))
+legend("bottomright", as.character(unique(erList$samples$group)), col=1:3, pch=20)
+
+
+erList_est = estimateCommonDisp(erList, verbose=T)
+names(erList_est)
+
+erList_est = estimateTagwiseDisp(erList_est)
+names(erList_est)
+
+plotBCV(erList_est)
+
+
+design.mat = model.matrix(~ 0 + erList$samples$group)
+colnames(design.mat) = levels(erList$samples$group)
+erList_common = estimateGLMCommonDisp(erList,design.mat)
+erList_common = estimateGLMTrendedDisp(erList_common,design.mat)
+erList_common = estimateGLMTagwiseDisp(erList_common,design.mat)
+plotBCV(erList_common)
+
+et12 = exactTest(erList_est, pair=c("CASE","CTRL"))
+topTags(et12, n=10)
+
+de1 = decideTestsDGE(et12, adjust.method="BH", p.value=0.05)
+summary(de1)
+
+de1tags12 <- rownames(erList_est)[as.logical(de1)] 
+plotSmear(et12, de.tags=de1tags12)
+abline(h = c(-2, 2), col = "blue")
+```
+
+# Question 6
+
+```{r Q6}
+library(compcodeR)
+
+B_625_625 <- generateSyntheticData(dataset = "countData", n.vars = 12500, 
+                                   samples.per.cond = 5, n.diffexp = 1250, 
+                                   repl.id = 1, seqdepth = 1e7, 
+                                   fraction.upregulated = 0.5, 
+                                   between.group.diffdisp = FALSE, 
+                                   filter.threshold.total = 1, 
+                                   filter.threshold.mediancpm = 0, 
+                                   fraction.non.overdispersed = 0, 
+                                   output.file = "B_625_625_5spc_repl1.rds")
+
+summarizeSyntheticDataSet(data.set = "B_625_625_5spc_repl1.rds", 
+                          output.filename = "B_625_625_5spc_repl1_datacheck.html")
+
+runDiffExp(data.file = "B_625_625_5spc_repl1.rds", 
+           result.extent = "voom.limma", Rmdfunction = "voom.limma.createRmd", 
+           output.directory = ".", norm.method = "TMM")
+runDiffExp(data.file = "B_625_625_5spc_repl1.rds", 
+           result.extent = "edgeR.exact", Rmdfunction = "edgeR.exact.createRmd", 
+           output.directory = ".", norm.method = "TMM", 
+           trend.method = "movingave", disp.type = "tagwise")
+runDiffExp(data.file = "B_625_625_5spc_repl1.rds", result.extent = "ttest", 
+           Rmdfunction = "ttest.createRmd", 
+           output.directory = ".", norm.method = "TMM")
+
+runComparisonGUI(input.directories = ".", 
+                 output.directory = ".", recursive = FALSE)
+
+```
